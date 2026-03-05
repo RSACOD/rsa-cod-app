@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RSA COD App - For Diversey</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Inter', sans-serif; }
+        body { background: linear-gradient(135deg, #1e3a8a 0%, #7c3aed 50%, #ec4899 100%); min-height: 100vh; }
+        .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.3); }
+        .btn-primary { background: linear-gradient(135deg, #1e3a8a 0%, #7c3aed 100%); transition: all 0.3s; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(30, 58, 138, 0.5); }
+        .notification { position: fixed; top: 20px; right: 20px; z-index: 9999; animation: slideIn 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55); max-width: 400px; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(120px); } to { opacity: 1; transform: translateX(0); } }
+        .badge-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .7; } }
+        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 9998; display: flex; align-items: center; justify-content: center; padding: 20px; animation: fadeIn 0.2s; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: #7c3aed; box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1); }
+        .progress-bar { height: 4px; background: linear-gradient(90deg, #1e3a8a, #7c3aed, #ec4899); animation: progress 2s ease-in-out; }
+        @keyframes progress { from { width: 0%; } to { width: 100%; } }
+        .card-hover { transition: all 0.3s; }
+        .card-hover:hover { transform: translateY(-4px); box-shadow: 0 20px 40px rgba(0,0,0,0.15); }
+        .shimmer { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+        .stat-card { position: relative; overflow: hidden; }
+        .stat-card::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent); animation: shine 3s infinite; }
+        @keyframes shine { 0% { left: -100%; } 100% { left: 100%; } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <div id="notification-container"></div>
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        // ==================== UTILITIES ====================
+        const generateId = () => `TXN${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+        const formatCurrency = (amt) => `AED ${parseFloat(amt || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const formatDate = (d) => new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const getTimeAgo = (date) => {
+            const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+            if (seconds < 60) return 'Just now';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+            return `${Math.floor(seconds / 86400)}d ago`;
+        };
+
+        // ==================== DATA MANAGEMENT ====================
+        const USERS = {
+            driver: { password: 'driver123', role: 'driver', name: 'Driver User' },
+            warehouse: { password: 'warehouse123', role: 'warehouse', name: 'Warehouse User' },
+            finance: { password: 'finance123', role: 'finance', name: 'Finance User' },
+            admin: { password: 'admin123', role: 'admin', name: 'Admin User' }
+        };
+
+        const getTransactions = () => JSON.parse(localStorage.getItem('rsa_transactions') || '[]');
+        const saveTransactions = (txns) => localStorage.setItem('rsa_transactions', JSON.stringify(txns));
+        
+        const getNotifications = (role) => {
+            const notifs = JSON.parse(localStorage.getItem(`rsa_notifications_${role}`) || '[]');
+            return notifs;
+        };
+        
+        const saveNotification = (role, notif) => {
+            const notifs = getNotifications(role);
+            notifs.unshift(notif);
+            localStorage.setItem(`rsa_notifications_${role}`, JSON.stringify(notifs.slice(0, 50))); // Keep last 50
+        };
+        
+        const clearNotifications = (role) => {
+            localStorage.setItem(`rsa_notifications_${role}`, JSON.stringify([]));
+        };
+
+        // ==================== NOTIFICATION SYSTEM ====================
+        const NotificationBell = ({ role, onClick }) => {
+            const [count, setCount] = useState(0);
+            const [show, setShow] = useState(false);
+            
+            useEffect(() => {
+                const updateCount = () => {
+                    const notifs = getNotifications(role);
+                    const unread = notifs.filter(n => !n.read).length;
+                    setCount(unread);
+                };
+                updateCount();
+                const interval = setInterval(updateCount, 2000);
+                return () => clearInterval(interval);
+            }, [role]);
+
+            return (
+                <div className="relative">
+                    <button onClick={() => { onClick(); setShow(!show); }} className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                        <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                        </svg>
+                        {count > 0 && (
+                            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center badge-pulse">
+                                {count > 9 ? '9+' : count}
+                            </span>
+                        )}
+                    </button>
+                </div>
+            );
+        };
+
+        const NotificationPanel = ({ role, onClose }) => {
+            const [notifs, setNotifs] = useState([]);
+            
+            useEffect(() => {
+                setNotifs(getNotifications(role));
+            }, [role]);
+
+            const markAllRead = () => {
+                const updated = notifs.map(n => ({ ...n, read: true }));
+                localStorage.setItem(`rsa_notifications_${role}`, JSON.stringify(updated));
+                setNotifs(updated);
+            };
+
+            const clearAll = () => {
+                clearNotifications(role);
+                setNotifs([]);
+            };
+
+            return (
+                <div className="modal" onClick={onClose}>
+                    <div className="glass rounded-2xl p-6 max-w-md w-full" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-xl font-bold">Notifications</h3>
+                            <div className="flex gap-2">
+                                {notifs.length > 0 && (
+                                    <>
+                                        <button onClick={markAllRead} className="text-sm text-blue-600 hover:text-blue-800">Mark all read</button>
+                                        <button onClick={clearAll} className="text-sm text-red-600 hover:text-red-800">Clear all</button>
+                                    </>
+                                )}
+                                <button onClick={onClose} className="text-gray-500 hover:text-gray-700">✕</button>
+                            </div>
+                        </div>
+                        <div className="space-y-3 max-h-96 overflow-y-auto">
+                            {notifs.length === 0 ? (
+                                <div className="text-center py-8 text-gray-500">
+                                    <svg className="w-16 h-16 mx-auto mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                                    </svg>
+                                    <p>No notifications</p>
+                                </div>
+                            ) : (
+                                notifs.map((n, i) => (
+                                    <div key={i} className={`p-4 rounded-lg border-2 ${n.read ? 'bg-gray-50 border-gray-200' : 'bg-blue-50 border-blue-200'}`}>
+                                        <div className="flex items-start gap-3">
+                                            <span className="text-2xl">{n.icon}</span>
+                                            <div className="flex-1">
+                                                <p className="font-semibold text-sm">{n.title}</p>
+                                                <p className="text-sm text-gray-600 mt-1">{n.message}</p>
+                                                <p className="text-xs text-gray-500 mt-2">{getTimeAgo(n.timestamp)}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Notification = ({ message, type, onClose, icon }) => {
+            useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, []);
+            const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-blue-500', warning: 'bg-yellow-500' };
+            const icons = { success: '✓', error: '✕', info: 'ℹ', warning: '⚠' };
+            return (
+                <div className={`notification ${colors[type]} text-white px-6 py-4 rounded-xl shadow-2xl`}>
+                    <div className="flex items-center gap-3">
+                        <span className="text-2xl">{icon || icons[type]}</span>
+                        <div className="flex-1">
+                            <p className="font-semibold">{message}</p>
+                            <div className="progress-bar mt-2 rounded-full"></div>
+                        </div>
+                        <button onClick={onClose} className="text-white hover:text-gray-200">✕</button>
+                    </div>
+                </div>
+            );
+        };
+
+        const ImageModal = ({ url, onClose }) => {
+            if (!url) return null;
+            return (
+                <div className="modal" onClick={onClose}>
+                    <div className="glass rounded-2xl p-4 max-w-4xl" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between mb-4">
+                            <h3 className="text-xl font-bold">Proof Image</h3>
+                            <div className="flex gap-2">
+                                <a href={url} download className="px-4 py-2 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600">📥 Download</a>
+                                <button onClick={onClose} className="px-4 py-2 bg-gray-500 text-white rounded-lg font-semibold hover:bg-gray-600">✕ Close</button>
+                            </div>
+                        </div>
+                        <img src={url} alt="Proof" className="w-full rounded-lg" />
+                    </div>
+                </div>
+            );
+        };
+
+        const LoginScreen = ({ onLogin }) => {
+            const [user, setUser] = useState('');
+            const [pass, setPass] = useState('');
+            const [err, setErr] = useState('');
+            const [loading, setLoading] = useState(false);
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                setLoading(true);
+                setTimeout(() => {
+                    const u = USERS[user.toLowerCase()];
+                    if (u && u.password === pass) onLogin(u.role, u.name, user.toLowerCase());
+                    else setErr('Invalid credentials');
+                    setLoading(false);
+                }, 500);
+            };
+
+            return (
+                <div className="min-h-screen flex items-center justify-center p-4">
+                    <div className="glass rounded-3xl p-10 max-w-md w-full shadow-2xl">
+                        <div className="text-center mb-8">
+                            <div className="w-28 h-28 mx-auto mb-4 rounded-2xl overflow-hidden shadow-lg" style={{background: 'linear-gradient(135deg, #ef4444, #3b82f6)'}}>
+                                <div className="w-full h-full bg-white m-1 rounded-xl flex items-center justify-center">
+                                    <div><div className="text-3xl font-black bg-gradient-to-r from-red-500 to-blue-500 bg-clip-text text-transparent">RSA</div>
+                                    <div className="text-xs font-bold text-gray-600">GLOBAL</div></div>
+                                </div>
+                            </div>
+                            <h1 className="text-3xl font-bold mb-2">RSA COD App</h1>
+                            <p className="text-xl font-semibold text-purple-600">For Diversey</p>
+                            <p className="text-sm text-gray-500 mt-2">Advanced Cash Collection System v2.0</p>
+                        </div>
+                        <form onSubmit={handleSubmit} className="space-y-5">
+                            <div>
+                                <label className="block text-sm font-semibold mb-2">Username</label>
+                                <input type="text" value={user} onChange={e => setUser(e.target.value)} className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl" required disabled={loading} />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold mb-2">Password</label>
+                                <input type="password" value={pass} onChange={e => setPass(e.target.value)} className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl" required disabled={loading} />
+                            </div>
+                            {err && <div className="bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">{err}</div>}
+                            <button type="submit" disabled={loading} className="btn-primary w-full text-white py-4 rounded-xl font-bold text-lg border-0 disabled:opacity-50">
+                                {loading ? 'Logging in...' : 'Login'}
+                            </button>
+                        </form>
+                        <div className="mt-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl">
+                            <div className="flex items-center gap-2 mb-1">
+                                <span className="text-green-600 text-xl">✓</span>
+                                <p className="font-bold text-green-800 text-sm">Enhanced Features v2.0</p>
+                            </div>
+                            <p className="text-xs text-green-700">Real-time notifications • Auto-close forms • Advanced analytics</p>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Header = ({ role, name, onLogout, onNotificationClick, showPanel }) => {
+            const [showNotifPanel, setShowNotifPanel] = useState(false);
+            
+            return (
+                <>
+                    <div className="glass rounded-2xl p-6 mb-6 shadow-xl">
+                        <div className="flex items-center justify-between flex-wrap gap-4">
+                            <div className="flex items-center gap-4">
+                                <div className="w-16 h-16 rounded-xl overflow-hidden shadow-lg" style={{background: 'linear-gradient(135deg, #ef4444, #3b82f6)'}}>
+                                    <div className="w-full h-full bg-white m-1 rounded-lg flex items-center justify-center">
+                                        <div><div className="text-lg font-black bg-gradient-to-r from-red-500 to-blue-500 bg-clip-text text-transparent">RSA</div>
+                                        <div className="text-[6px] font-bold text-gray-600">GLOBAL</div></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <h1 className="text-2xl font-bold">COD App <span className="text-purple-600">For Diversey</span></h1>
+                                    <p className="text-sm text-gray-600"><span className="font-semibold capitalize">{role}</span> - {name}</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <NotificationBell role={role} onClick={() => setShowNotifPanel(!showNotifPanel)} />
+                                <button onClick={onLogout} className="px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-semibold transition-colors">Logout</button>
+                            </div>
+                        </div>
+                    </div>
+                    {showNotifPanel && <NotificationPanel role={role} onClose={() => setShowNotifPanel(false)} />}
+                </>
+            );
+        };
+
+        // ==================== DRIVER DASHBOARD ====================
+        const DriverDashboard = ({ txns, onUpdate, notify, driverName }) => {
+            const [show, setShow] = useState(false);
+            const [form, setForm] = useState({ 
+                invoiceNumber: '', invoiceAmount: '', receivedAmount: '', paymentMode: '', 
+                deliveryStatus: '', remarks: '', customerName: '', proofImage: null 
+            });
+            const [submitting, setSubmitting] = useState(false);
+            
+            const myTxns = txns.filter(t => t.driverName === driverName);
+            const stats = {
+                pending: myTxns.filter(t => t.status.includes('pending') || t.status === 'warehouse_approved').length,
+                completed: myTxns.filter(t => t.status === 'completed').length,
+                rejected: myTxns.filter(t => t.status.includes('rejected')).length,
+                total: myTxns.reduce((s, t) => s + t.receivedAmount, 0)
+            };
+
+            const submit = (e) => {
+                e.preventDefault();
+                if (!form.proofImage) return notify('Please upload proof image', 'error');
+                
+                setSubmitting(true);
+                
+                setTimeout(() => {
+                    const newTxn = {
+                        id: generateId(),
+                        ...form,
+                        driverName,
+                        invoiceAmount: parseFloat(form.invoiceAmount),
+                        receivedAmount: parseFloat(form.receivedAmount),
+                        balance: parseFloat(form.invoiceAmount) - parseFloat(form.receivedAmount),
+                        status: 'pending_warehouse',
+                        createdAt: new Date().toISOString(),
+                        timeline: [{ stage: 'driver_submitted', date: new Date().toISOString(), user: driverName }]
+                    };
+
+                    onUpdate([...txns, newTxn]);
+                    
+                    // Send notification to warehouse
+                    saveNotification('warehouse', {
+                        id: Date.now(),
+                        title: '📦 New Submission',
+                        message: `${driverName} submitted ${form.invoiceNumber} - ${formatCurrency(form.receivedAmount)}`,
+                        timestamp: new Date().toISOString(),
+                        read: false,
+                        icon: '📦'
+                    });
+                    
+                    notify('✅ Submitted to Warehouse!', 'success', '🎉');
+                    
+                    // Reset form and close
+                    setForm({ invoiceNumber: '', invoiceAmount: '', receivedAmount: '', paymentMode: '', deliveryStatus: '', remarks: '', customerName: '', proofImage: null });
+                    setSubmitting(false);
+                    setShow(false); // Auto-close form
+                }, 1000);
+            };
+
+            const handleImg = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    if (file.size > 5 * 1024 * 1024) {
+                        notify('Image too large (max 5MB)', 'error');
+                        return;
+                    }
+                    const reader = new FileReader();
+                    reader.onload = () => setForm({ ...form, proofImage: reader.result });
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex justify-between items-center">
+                        <h2 className="text-2xl font-bold text-white">Driver Cash Collection</h2>
+                        <button onClick={() => setShow(!show)} className="btn-primary text-white px-6 py-3 rounded-xl font-semibold border-0 flex items-center gap-2">
+                            {show ? '✕ Cancel' : '+ New Collection'}
+                        </button>
+                    </div>
+
+                    {/* Statistics Cards */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        {[
+                            { title: 'Pending', count: stats.pending, color: 'from-yellow-500 to-orange-500', icon: '⏳' },
+                            { title: 'Completed', count: stats.completed, color: 'from-green-500 to-emerald-500', icon: '✓' },
+                            { title: 'Rejected', count: stats.rejected, color: 'from-red-500 to-pink-500', icon: '✕' },
+                            { title: 'Total Cash', count: formatCurrency(stats.total), color: 'from-purple-500 to-indigo-500', icon: '💰' }
+                        ].map(({ title, count, color, icon }) => (
+                            <div key={title} className="glass rounded-xl p-6 shadow-lg stat-card card-hover">
+                                <div className={`bg-gradient-to-br ${color} w-12 h-12 rounded-lg flex items-center justify-center mb-3 shadow-lg`}>
+                                    <span className="text-2xl">{icon}</span>
+                                </div>
+                                <div className="text-2xl font-bold mb-1">{typeof count === 'number' ? count : count}</div>
+                                <div className="text-sm text-gray-600">{title}</div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {show && (
+                        <div className="glass rounded-2xl p-8 shadow-xl">
+                            <h3 className="text-xl font-bold mb-6">Submit Cash Collection</h3>
+                            <form onSubmit={submit} className="space-y-6">
+                                <div className="grid md:grid-cols-2 gap-6">
+                                    <div>
+                                        <label className="block text-sm font-semibold mb-2">Invoice Number *</label>
+                                        <input type="text" value={form.invoiceNumber} onChange={e => setForm({...form, invoiceNumber: e.target.value})} 
+                                            className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg" placeholder="INV-2025-XXX" required disabled={submitting} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-semibold mb-2">Customer Name *</label>
+                                        <input type="text" value={form.customerName} onChange={e => setForm({...form, customerName: e.target.value})} 
+                                            className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg" required disabled={submitting} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-semibold mb-2">Invoice Amount (AED) *</label>
+                                        <input type="number" step="0.01" value={form.invoiceAmount} onChange={e => setForm({...form, invoiceAmount: e.target.value})} 
+                                            className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg" required disabled={submitting} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-semibold mb-2">Received Amount (AED) *</label>
+                                        <input type="number" step="0.01" value={form.receivedAmount} onChange={e => setForm({...form, receivedAmount: e.target.value})} 
+                                            className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg" required disabled={submitting} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-semibold mb-2">Payment Mode *</label>
+                                        <select value={form.paymentMode} onChange={e => setForm({...form, paymentMode: e.target.value})} 
+                                            className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg" required disabled={submitting}>
+                                            <option value="">Select Mode</option>
+                                            <option value="CASH">💵 CASH</option>
+                                            <option value="CHEQUE">📄 CHEQUE</option>
+                                            <option value="CHEQUE + CASH">💵📄 CHEQUE + CASH</option>
+                                            <option value="ONLINE / POS">💳 ONLINE / POS</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-semibold mb-2">Delivery Status *</label>
+                                        <select value={form.deliveryStatus} onChange={e => setForm({...form, deliveryStatus: e.target.value})} 
+                                            className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg" required disabled={submitting}>
+                                            <option value="">Select Status</option>
+                                            <option value="Delivered">✅ Delivered</option>
+                                            <option value="Partially Delivered">🔶 Partially Delivered</option>
+                                            <option value="Undelivered">❌ Undelivered</option>
+                                            <option value="Returned">↩️ Returned</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                
+                                {form.invoiceAmount && form.receivedAmount && (
+                                    <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4">
+                                        <div className="flex justify-between items-center">
+                                            <span className="font-semibold text-blue-900">Balance:</span>
+                                            <span className="text-xl font-bold text-blue-600">
+                                                {formatCurrency(parseFloat(form.invoiceAmount) - parseFloat(form.receivedAmount))}
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div>
+                                    <label className="block text-sm font-semibold mb-2">Remarks {form.deliveryStatus !== 'Delivered' && form.deliveryStatus ? '*' : ''}</label>
+                                    <textarea value={form.remarks} onChange={e => setForm({...form, remarks: e.target.value})} 
+                                        className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg" rows="3" 
+                                        required={form.deliveryStatus !== 'Delivered' && form.deliveryStatus} 
+                                        disabled={submitting}
+                                        placeholder="Add any additional notes..." />
+                                </div>
+                                
+                                <div>
+                                    <label className="block text-sm font-semibold mb-2">Proof Upload *</label>
+                                    <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4 mb-3">
+                                        <div className="flex items-start gap-3">
+                                            <span className="text-2xl">⚠️</span>
+                                            <div>
+                                                <p className="text-sm text-yellow-900 font-semibold">Important Requirements:</p>
+                                                <ul className="text-sm text-yellow-800 mt-2 space-y-1">
+                                                    <li>✓ Customer signature with mobile number</li>
+                                                    <li>✓ Customer stamp (if available)</li>
+                                                    <li>✓ Clear and readable image</li>
+                                                    <li>✓ Maximum file size: 5MB</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <input type="file" accept="image/*" capture="environment" onChange={handleImg} 
+                                        className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg" required disabled={submitting} />
+                                    {form.proofImage && (
+                                        <div className="mt-3">
+                                            <img src={form.proofImage} className="w-full max-w-xs rounded-lg border-2 border-purple-300 shadow-lg" alt="Preview" />
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                <button type="submit" disabled={submitting} 
+                                    className="btn-primary w-full text-white py-4 rounded-xl font-bold text-lg border-0 disabled:opacity-50 flex items-center justify-center gap-2">
+                                    {submitting ? (
+                                        <>
+                                            <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                                            Submitting...
+                                        </>
+                                    ) : (
+                                        <>📤 Submit to Warehouse</>
+                                    )}
+                                </button>
+                            </form>
+                        </div>
+                    )}
+
+                    <div className="glass rounded-2xl p-6 shadow-lg">
+                        <h3 className="text-lg font-bold mb-4">My Submissions ({myTxns.length})</h3>
+                        {myTxns.length === 0 ? (
+                            <div className="text-center py-12">
+                                <div className="text-6xl mb-4">📦</div>
+                                <p className="text-gray-500 text-lg">No submissions yet</p>
+                                <p className="text-gray-400 text-sm mt-2">Click "New Collection" to get started</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {myTxns.map(tx => (
+                                    <div key={tx.id} className="border-2 border-gray-200 rounded-xl p-6 bg-white card-hover">
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div>
+                                                <h4 className="font-bold text-lg">{tx.invoiceNumber}</h4>
+                                                <p className="text-gray-600">{tx.customerName}</p>
+                                                <p className="text-sm text-gray-500">{tx.paymentMode}</p>
+                                                <p className="text-xs text-gray-400 mt-2">{getTimeAgo(tx.createdAt)}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="text-2xl font-bold text-purple-600">{formatCurrency(tx.receivedAmount)}</div>
+                                                <span className={`text-xs px-3 py-1 rounded-full inline-block mt-2 ${
+                                                    tx.status === 'completed' ? 'bg-green-100 text-green-800' : 
+                                                    tx.status.includes('rejected') ? 'bg-red-100 text-red-800' : 
+                                                    'bg-yellow-100 text-yellow-800'
+                                                }`}>
+                                                    {tx.status.replace(/_/g, ' ').toUpperCase()}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // ==================== WAREHOUSE & FINANCE DASHBOARDS ====================
+        // (Continuing with Warehouse and Finance components - same structure with notification features added)
+        
+        const WarehouseDashboard = ({ txns, onUpdate, notify }) => {
+            const [editId, setEditId] = useState(null);
+            const [editAmt, setEditAmt] = useState('');
+            const [viewImg, setViewImg] = useState(null);
+
+            const pending = txns.filter(t => t.status === 'pending_warehouse');
+            const approved = txns.filter(t => t.status === 'warehouse_approved');
+            const rejected = txns.filter(t => t.status === 'rejected_warehouse');
+
+            const verify = (tx) => {
+                const updated = txns.map(t => t.id === tx.id ? {
+                    ...t,
+                    status: 'warehouse_approved',
+                    warehouseApprovedAt: new Date().toISOString(),
+                    timeline: [...(t.timeline || []), { stage: 'warehouse_approved', date: new Date().toISOString(), user: 'Warehouse User' }]
+                } : t);
+                onUpdate(updated);
+                
+                // Send notification to finance
+                saveNotification('finance', {
+                    id: Date.now(),
+                    title: '✅ Warehouse Verified',
+                    message: `${tx.invoiceNumber} verified - ${formatCurrency(tx.receivedAmount)} ready for approval`,
+                    timestamp: new Date().toISOString(),
+                    read: false,
+                    icon: '✅'
+                });
+                
+                notify('✅ Verified! Sent to Finance', 'success');
+            };
+
+            const reject = (tx) => {
+                const reason = prompt('Reason for rejection:');
+                if (!reason) return;
+                const updated = txns.map(t => t.id === tx.id ? {
+                    ...t,
+                    status: 'rejected_warehouse',
+                    rejectionReason: reason,
+                    timeline: [...(t.timeline || []), { stage: 'rejected_warehouse', date: new Date().toISOString(), user: 'Warehouse User', reason }]
+                } : t);
+                onUpdate(updated);
+                notify('❌ Transaction Rejected', 'error');
+            };
+
+            const saveAmt = (tx) => {
+                const updated = txns.map(t => t.id === tx.id ? {
+                    ...t,
+                    receivedAmount: parseFloat(editAmt),
+                    balance: t.invoiceAmount - parseFloat(editAmt),
+                    amountEdited: true
+                } : t);
+                onUpdate(updated);
+                setEditId(null);
+                notify('✓ Amount Updated', 'success');
+            };
+
+            return (
+                <div className="space-y-6">
+                    <h2 className="text-2xl font-bold text-white">Warehouse Verification</h2>
+
+                    <div className="grid md:grid-cols-4 gap-4">
+                        {[
+                            { title: 'Pending Verifications', count: pending.length, color: 'yellow', icon: '⏳' },
+                            { title: 'Approved Today', count: approved.length, color: 'green', icon: '✅' },
+                            { title: 'Rejected', count: rejected.length, color: 'red', icon: '❌' },
+                            { title: 'Amount Summary', count: formatCurrency(pending.reduce((s, t) => s + t.receivedAmount, 0)), color: 'purple', icon: '💰' }
+                        ].map(({ title, count, color, icon }) => {
+                            const colors = { yellow: 'from-yellow-500 to-orange-500', green: 'from-green-500 to-emerald-500', red: 'from-red-500 to-pink-500', purple: 'from-purple-500 to-pink-500' };
+                            return (
+                                <div key={title} className="glass rounded-xl p-6 shadow-lg stat-card card-hover">
+                                    <div className={`bg-gradient-to-br ${colors[color]} w-12 h-12 rounded-lg flex items-center justify-center mb-3`}>
+                                        <span className="text-2xl">{icon}</span>
+                                    </div>
+                                    <div className="text-2xl font-bold mb-1">{count}</div>
+                                    <div className="text-sm text-gray-600">{title}</div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div className="glass rounded-2xl p-6 shadow-lg">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold">Pending Verifications ({pending.length})</h3>
+                            {pending.length > 0 && (
+                                <span className="badge-pulse bg-yellow-500 text-white px-3 py-1 rounded-full text-sm font-semibold">
+                                    {pending.length} New
+                                </span>
+                            )}
+                        </div>
+                        {pending.length === 0 ? (
+                            <div className="text-center py-12">
+                                <div className="text-6xl mb-4">✅</div>
+                                <p className="text-gray-500 text-lg">All caught up!</p>
+                                <p className="text-gray-400 text-sm mt-2">No pending verifications</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {pending.map(tx => (
+                                    <div key={tx.id} className="border-2 border-purple-200 rounded-xl p-6 bg-white card-hover">
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 mb-2">
+                                                    <h4 className="font-bold text-lg">{tx.invoiceNumber}</h4>
+                                                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">{getTimeAgo(tx.createdAt)}</span>
+                                                </div>
+                                                <p className="text-gray-600">{tx.customerName}</p>
+                                                <p className="text-sm text-gray-500">Driver: {tx.driverName}</p>
+                                                <p className="text-sm text-gray-500">Payment: {tx.paymentMode}</p>
+                                                <p className="text-sm text-gray-500">Status: {tx.deliveryStatus}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                {editId === tx.id ? (
+                                                    <div className="space-y-2">
+                                                        <input type="number" step="0.01" value={editAmt} onChange={e => setEditAmt(e.target.value)} 
+                                                            className="w-40 px-3 py-2 border-2 border-purple-400 rounded-lg font-bold text-right text-lg" autoFocus />
+                                                        <div className="flex gap-2">
+                                                            <button onClick={() => saveAmt(tx)} className="px-3 py-1 bg-green-500 text-white rounded text-sm font-semibold hover:bg-green-600">✓ Save</button>
+                                                            <button onClick={() => setEditId(null)} className="px-3 py-1 bg-gray-500 text-white rounded text-sm font-semibold hover:bg-gray-600">✕</button>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div>
+                                                        <div className="text-2xl font-bold text-purple-600 mb-2">{formatCurrency(tx.receivedAmount)}</div>
+                                                        <button onClick={() => { setEditId(tx.id); setEditAmt(tx.receivedAmount); }} 
+                                                            className="text-sm text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1">
+                                                            ✏️ Edit Amount
+                                                        </button>
+                                                        <div className="text-xs text-gray-500 mt-2">Invoice: {formatCurrency(tx.invoiceAmount)}</div>
+                                                        {tx.balance > 0 && <div className="text-xs text-orange-600 mt-1">Balance: {formatCurrency(tx.balance)}</div>}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        
+                                        {tx.remarks && (
+                                            <div className="bg-gray-50 rounded-lg p-3 mb-4">
+                                                <span className="text-xs font-semibold text-gray-700">Remarks:</span>
+                                                <p className="text-sm text-gray-600 mt-1">{tx.remarks}</p>
+                                            </div>
+                                        )}
+
+                                        {tx.proofImage && (
+                                            <div className="mb-4">
+                                                <p className="text-sm font-semibold mb-2">Proof Image:</p>
+                                                <img src={tx.proofImage} onClick={() => setViewImg(tx.proofImage)} 
+                                                    className="w-48 h-48 object-cover rounded-lg cursor-pointer hover:opacity-80 border-2 border-gray-300 shadow-md transition-all hover:scale-105" />
+                                            </div>
+                                        )}
+                                        
+                                        <div className="flex gap-3 pt-4 border-t">
+                                            <button onClick={() => verify(tx)} 
+                                                className="flex-1 bg-green-500 hover:bg-green-600 text-white py-3 rounded-lg font-semibold transition-all hover:shadow-lg flex items-center justify-center gap-2">
+                                                ✓ Verify & Send to Finance
+                                            </button>
+                                            <button onClick={() => reject(tx)} 
+                                                className="flex-1 bg-red-500 hover:bg-red-600 text-white py-3 rounded-lg font-semibold transition-all hover:shadow-lg flex items-center justify-center gap-2">
+                                                ✕ Reject
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {viewImg && <ImageModal url={viewImg} onClose={() => setViewImg(null)} />}
+                </div>
+            );
+        };
+
+        const FinanceDashboard = ({ txns, onUpdate, notify }) => {
+            const [viewImg, setViewImg] = useState(null);
+
+            const pending = txns.filter(t => t.status === 'warehouse_approved');
+            const approved = txns.filter(t => t.status === 'completed');
+            const rejected = txns.filter(t => t.status === 'rejected_finance');
+
+            const approve = (tx) => {
+                const updated = txns.map(t => t.id === tx.id ? {
+                    ...t,
+                    status: 'completed',
+                    financeApprovedAt: new Date().toISOString(),
+                    timeline: [...(t.timeline || []), { stage: 'finance_approved', date: new Date().toISOString(), user: 'Finance User' }]
+                } : t);
+                onUpdate(updated);
+                notify('✅ Approved & Completed!', 'success', '🎉');
+            };
+
+            const reject = (tx) => {
+                const reason = prompt('Reason for rejection:');
+                if (!reason) return;
+                const updated = txns.map(t => t.id === tx.id ? {
+                    ...t,
+                    status: 'rejected_finance',
+                    rejectionReason: reason,
+                    timeline: [...(t.timeline || []), { stage: 'rejected_finance', date: new Date().toISOString(), user: 'Finance User', reason }]
+                } : t);
+                onUpdate(updated);
+                notify('❌ Transaction Rejected', 'error');
+            };
+
+            return (
+                <div className="space-y-6">
+                    <h2 className="text-2xl font-bold text-white">Finance Approval</h2>
+
+                    <div className="grid md:grid-cols-4 gap-4">
+                        {[
+                            { title: 'Pending Approvals', count: pending.length, color: 'blue', icon: '⏳' },
+                            { title: 'Approved Today', count: approved.length, color: 'green', icon: '✅' },
+                            { title: 'Rejected', count: rejected.length, color: 'red', icon: '❌' },
+                            { title: 'Cash Summary', count: formatCurrency(pending.reduce((s, t) => s + t.receivedAmount, 0)), color: 'purple', icon: '💰' }
+                        ].map(({ title, count, color, icon }) => {
+                            const colors = { blue: 'from-blue-500 to-cyan-500', green: 'from-green-500 to-emerald-500', red: 'from-red-500 to-pink-500', purple: 'from-purple-500 to-pink-500' };
+                            return (
+                                <div key={title} className="glass rounded-xl p-6 shadow-lg stat-card card-hover">
+                                    <div className={`bg-gradient-to-br ${colors[color]} w-12 h-12 rounded-lg flex items-center justify-center mb-3`}>
+                                        <span className="text-2xl">{icon}</span>
+                                    </div>
+                                    <div className="text-2xl font-bold mb-1">{count}</div>
+                                    <div className="text-sm text-gray-600">{title}</div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div className="glass rounded-2xl p-6 shadow-lg">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold">Pending Approvals ({pending.length})</h3>
+                            {pending.length > 0 && (
+                                <span className="badge-pulse bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-semibold">
+                                    {pending.length} New
+                                </span>
+                            )}
+                        </div>
+                        {pending.length === 0 ? (
+                            <div className="text-center py-12">
+                                <div className="text-6xl mb-4">✅</div>
+                                <p className="text-gray-500 text-lg">All clear!</p>
+                                <p className="text-gray-400 text-sm mt-2">No pending approvals</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {pending.map(tx => (
+                                    <div key={tx.id} className="border-2 border-blue-200 rounded-xl p-6 bg-white card-hover">
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 mb-2">
+                                                    <h4 className="font-bold text-lg">{tx.invoiceNumber}</h4>
+                                                    <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">Warehouse Verified</span>
+                                                </div>
+                                                <p className="text-gray-600">{tx.customerName}</p>
+                                                <p className="text-sm text-gray-500">Driver: {tx.driverName}</p>
+                                                <p className="text-sm text-gray-500">Payment: {tx.paymentMode}</p>
+                                                {tx.amountEdited && (
+                                                    <p className="text-xs text-orange-600 mt-1">⚠️ Amount was edited by warehouse</p>
+                                                )}
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="text-2xl font-bold text-purple-600">{formatCurrency(tx.receivedAmount)}</div>
+                                                <div className="text-xs text-gray-500 mt-1">Invoice: {formatCurrency(tx.invoiceAmount)}</div>
+                                                {tx.balance > 0 && <div className="text-xs text-orange-600 mt-1">Balance: {formatCurrency(tx.balance)}</div>}
+                                            </div>
+                                        </div>
+                                        
+                                        {tx.proofImage && (
+                                            <div className="mb-4">
+                                                <p className="text-sm font-semibold mb-2">Proof Image:</p>
+                                                <img src={tx.proofImage} onClick={() => setViewImg(tx.proofImage)} 
+                                                    className="w-48 h-48 object-cover rounded-lg cursor-pointer hover:opacity-80 border-2 border-gray-300 shadow-md transition-all hover:scale-105" />
+                                            </div>
+                                        )}
+                                        
+                                        <div className="flex gap-3 pt-4 border-t">
+                                            <button onClick={() => approve(tx)} 
+                                                className="flex-1 bg-green-500 hover:bg-green-600 text-white py-3 rounded-lg font-semibold transition-all hover:shadow-lg flex items-center justify-center gap-2">
+                                                ✓ Approve & Complete
+                                            </button>
+                                            <button onClick={() => reject(tx)} 
+                                                className="flex-1 bg-red-500 hover:bg-red-600 text-white py-3 rounded-lg font-semibold transition-all hover:shadow-lg flex items-center justify-center gap-2">
+                                                ✕ Reject
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {viewImg && <ImageModal url={viewImg} onClose={() => setViewImg(null)} />}
+                </div>
+            );
+        };
+
+        // ==================== ADMIN DASHBOARD ====================
+        const AdminDashboard = ({ txns, notify }) => {
+            const [filter, setFilter] = useState('all');
+            const [viewImg, setViewImg] = useState(null);
+            const [exporting, setExporting] = useState(false);
+
+            const filterTxns = (ts) => {
+                const now = new Date();
+                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+                const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+                if (filter === 'today') return ts.filter(t => new Date(t.createdAt) >= today);
+                if (filter === 'week') return ts.filter(t => new Date(t.createdAt) >= weekAgo);
+                if (filter === 'month') return ts.filter(t => new Date(t.createdAt) >= monthAgo);
+                return ts;
+            };
+
+            const filtered = filterTxns(txns);
+            const stats = {
+                total: filtered.length,
+                pending: filtered.filter(t => t.status.includes('pending') || t.status === 'warehouse_approved').length,
+                completed: filtered.filter(t => t.status === 'completed').length,
+                rejected: filtered.filter(t => t.status.includes('rejected')).length,
+                totalAmount: filtered.reduce((s, t) => s + (t.receivedAmount || 0), 0)
+            };
+
+            const exportExcel = async () => {
+                if (txns.length === 0) return notify('No data to export', 'error');
+                setExporting(true);
+                
+                setTimeout(async () => {
+                    try {
+                        const wb = new ExcelJS.Workbook();
+                        wb.creator = 'RSA Global - Diversey';
+                        wb.created = new Date();
+                        
+                        const ws = wb.addWorksheet('COD Transactions');
+                        ws.columns = [
+                            { header: 'Transaction ID', key: 'id', width: 25 },
+                            { header: 'Driver Name', key: 'driver', width: 20 },
+                            { header: 'Invoice Number', key: 'invoice', width: 18 },
+                            { header: 'Customer Name', key: 'customer', width: 25 },
+                            { header: 'Invoice Amount', key: 'invoiceAmt', width: 15 },
+                            { header: 'Received Amount', key: 'receivedAmt', width: 15 },
+                            { header: 'Balance', key: 'balance', width: 12 },
+                            { header: 'Payment Mode', key: 'payment', width: 15 },
+                            { header: 'Delivery Status', key: 'delivery', width: 18 },
+                            { header: 'Status', key: 'status', width: 20 },
+                            { header: 'Warehouse Approval', key: 'warehouse', width: 22 },
+                            { header: 'Finance Approval', key: 'finance', width: 22 },
+                            { header: 'Created Date & Time', key: 'date', width: 22 }
+                        ];
+                        
+                        ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
+                        ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1e3a8a' } };
+                        ws.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
+                        ws.getRow(1).height = 30;
+
+                        txns.forEach(tx => {
+                            const row = ws.addRow({
+                                id: tx.id,
+                                driver: tx.driverName,
+                                invoice: tx.invoiceNumber,
+                                customer: tx.customerName,
+                                invoiceAmt: tx.invoiceAmount,
+                                receivedAmt: tx.receivedAmount,
+                                balance: tx.balance || 0,
+                                payment: tx.paymentMode,
+                                delivery: tx.deliveryStatus,
+                                status: tx.status.replace(/_/g, ' ').toUpperCase(),
+                                warehouse: tx.warehouseApprovedAt ? formatDate(tx.warehouseApprovedAt) : 'Pending',
+                                finance: tx.financeApprovedAt ? formatDate(tx.financeApprovedAt) : 'Pending',
+                                date: formatDate(tx.createdAt)
+                            });
+                            
+                            row.eachCell((cell) => {
+                                cell.border = {
+                                    top: { style: 'thin' },
+                                    left: { style: 'thin' },
+                                    bottom: { style: 'thin' },
+                                    right: { style: 'thin' }
+                                };
+                            });
+                        });
+
+                        const buffer = await wb.xlsx.writeBuffer();
+                        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                        const url = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = `RSA_COD_Report_${new Date().toISOString().split('T')[0]}.xlsx`;
+                        link.click();
+                        URL.revokeObjectURL(url);
+                        
+                        setExporting(false);
+                        notify('📊 Excel Exported Successfully!', 'success');
+                    } catch (err) {
+                        setExporting(false);
+                        notify('Export failed', 'error');
+                    }
+                }, 1000);
+            };
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex justify-between items-center flex-wrap gap-4">
+                        <h2 className="text-2xl font-bold text-white">Admin Dashboard</h2>
+                        <button onClick={exportExcel} disabled={exporting} 
+                            className="btn-primary text-white px-6 py-3 rounded-xl font-semibold border-0 flex items-center gap-2 disabled:opacity-50">
+                            {exporting ? (
+                                <>
+                                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                                    Exporting...
+                                </>
+                            ) : (
+                                <>📊 Export Excel</>
+                            )}
+                        </button>
+                    </div>
+
+                    <div className="glass rounded-xl p-4 flex gap-2 flex-wrap">
+                        {[
+                            { id: 'all', label: 'All Time', icon: '📅' },
+                            { id: 'today', label: 'Per Day', icon: '📆' },
+                            { id: 'week', label: 'Weekly', icon: '📊' },
+                            { id: 'month', label: 'Monthly', icon: '📈' }
+                        ].map(f => (
+                            <button key={f.id} onClick={() => setFilter(f.id)} 
+                                className={`px-4 py-2 rounded-lg font-semibold flex items-center gap-2 transition-all ${
+                                    filter === f.id ? 'bg-purple-600 text-white shadow-lg' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                }`}>
+                                <span>{f.icon}</span>
+                                {f.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="grid md:grid-cols-4 gap-4">
+                        {[
+                            { title: 'Total Transactions', count: stats.total, icon: '📋', color: 'from-purple-500 to-indigo-500' },
+                            { title: 'Pending Tasks', count: stats.pending, icon: '⏳', color: 'from-yellow-500 to-orange-500' },
+                            { title: 'Completed Tasks', count: stats.completed, icon: '✓', color: 'from-green-500 to-emerald-500' },
+                            { title: 'Rejected Tasks', count: stats.rejected, icon: '✕', color: 'from-red-500 to-pink-500' }
+                        ].map(({ title, count, icon, color }) => (
+                            <div key={title} className="glass rounded-xl p-6 shadow-lg stat-card card-hover">
+                                <div className={`bg-gradient-to-br ${color} w-12 h-12 rounded-lg flex items-center justify-center mb-3 shadow-lg`}>
+                                    <span className="text-2xl">{icon}</span>
+                                </div>
+                                <div className="text-3xl font-bold mb-1">{count}</div>
+                                <div className="text-sm text-gray-600">{title}</div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="glass rounded-xl p-6 shadow-lg text-center">
+                        <p className="text-sm text-gray-600 mb-2">Total Cash Collected</p>
+                        <p className="text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600">
+                            {formatCurrency(stats.totalAmount)}
+                        </p>
+                    </div>
+
+                    <div className="glass rounded-2xl p-6 shadow-lg">
+                        <h3 className="text-lg font-bold mb-4">All Transactions ({filtered.length})</h3>
+                        {filtered.length === 0 ? (
+                            <div className="text-center py-12">
+                                <div className="text-6xl mb-4">📊</div>
+                                <p className="text-gray-500 text-lg">No transactions found</p>
+                                <p className="text-gray-400 text-sm mt-2">Try selecting a different filter</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {filtered.map(tx => (
+                                    <div key={tx.id} className="border border-gray-200 rounded-lg p-4 bg-white hover:shadow-md transition-all card-hover">
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <p className="font-bold">{tx.invoiceNumber}</p>
+                                                    <span className={`text-xs px-2 py-1 rounded-full ${
+                                                        tx.status === 'completed' ? 'bg-green-100 text-green-800' : 
+                                                        tx.status.includes('rejected') ? 'bg-red-100 text-red-800' : 
+                                                        'bg-yellow-100 text-yellow-800'
+                                                    }`}>
+                                                        {tx.status.replace(/_/g, ' ')}
+                                                    </span>
+                                                </div>
+                                                <p className="text-sm text-gray-600">{tx.customerName} - {tx.driverName}</p>
+                                                <p className="text-xs text-gray-500">{tx.paymentMode} • {formatDate(tx.createdAt)}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="font-bold text-purple-600">{formatCurrency(tx.receivedAmount)}</p>
+                                                {tx.proofImage && (
+                                                    <button onClick={() => setViewImg(tx.proofImage)} 
+                                                        className="text-xs text-blue-600 hover:text-blue-800 mt-1">
+                                                        View Proof
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {viewImg && <ImageModal url={viewImg} onClose={() => setViewImg(null)} />}
+                </div>
+            );
+        };
+
+        // ==================== MAIN APP ====================
+        const App = () => {
+            const [logged, setLogged] = useState(false);
+            const [role, setRole] = useState('');
+            const [name, setName] = useState('');
+            const [key, setKey] = useState('');
+            const [txns, setTxns] = useState([]);
+            const [notif, setNotif] = useState(null);
+
+            useEffect(() => {
+                setTxns(getTransactions());
+                const saved = localStorage.getItem('rsa_user');
+                if (saved) {
+                    const u = JSON.parse(saved);
+                    setRole(u.role);
+                    setName(u.name);
+                    setKey(u.key);
+                    setLogged(true);
+                }
+            }, []);
+
+            const notify = (msg, type = 'info', icon) => setNotif({ message: msg, type, icon, id: Date.now() });
+
+            const login = (r, n, k) => {
+                localStorage.setItem('rsa_user', JSON.stringify({ role: r, name: n, key: k }));
+                setRole(r);
+                setName(n);
+                setKey(k);
+                setLogged(true);
+                notify(`Welcome ${n}!`, 'success', '👋');
+            };
+
+            const logout = () => {
+                localStorage.removeItem('rsa_user');
+                setLogged(false);
+                notify('Logged out successfully', 'info', '👋');
+            };
+
+            const update = (ts) => {
+                setTxns(ts);
+                saveTransactions(ts);
+            };
+
+            if (!logged) return (
+                <>
+                    <LoginScreen onLogin={login} />
+                    {notif && <Notification key={notif.id} {...notif} onClose={() => setNotif(null)} />}
+                </>
+            );
+
+            return (
+                <div className="max-w-7xl mx-auto p-4 pb-20">
+                    <Header role={role} name={name} onLogout={logout} />
+
+                    {role === 'driver' && <DriverDashboard txns={txns} onUpdate={update} notify={notify} driverName={name} />}
+                    {role === 'warehouse' && <WarehouseDashboard txns={txns} onUpdate={update} notify={notify} />}
+                    {role === 'finance' && <FinanceDashboard txns={txns} onUpdate={update} notify={notify} />}
+                    {role === 'admin' && <AdminDashboard txns={txns} notify={notify} />}
+
+                    {notif && <Notification key={notif.id} {...notif} onClose={() => setNotif(null)} />}
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
